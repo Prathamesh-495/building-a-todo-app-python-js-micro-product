@@ -1,6 +1,10 @@
+# =============================================================================
+# Part 7: Admin Panel
+# =============================================================================
+
 from flask import Flask, request, jsonify, render_template
 from models import db, User, Todo
-from auth import hash_password, verify_password, create_token, token_required, admin_required
+from auth import hash_password, verify_password, create_token, get_current_user, get_admin_user
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///todo.db'
@@ -11,14 +15,13 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
 
-    # Create default admin user if not exists
     admin = User.query.filter_by(email='admin@example.com').first()
     if not admin:
         admin = User(
             username='admin',
             email='admin@example.com',
             password_hash=hash_password('admin123'),
-            is_admin=True
+            is_admin=True  # This makes user an admin
         )
         db.session.add(admin)
         db.session.commit()
@@ -77,7 +80,7 @@ def register():
     user = User(
         username=data['username'],
         email=data['email'],
-        password_hash=hash_password(data['password'])
+        password_hash=hash_password(data['password'])  # is_admin defaults to False
     )
 
     db.session.add(user)
@@ -104,27 +107,38 @@ def login():
             'id': user.id,
             'username': user.username,
             'email': user.email,
-            'is_admin': user.is_admin  # Include admin status
+            'is_admin': user.is_admin  # Frontend shows admin link if True
         }
     })
 
 
 # ============================================
-# TODO API (Protected)
+# TODO API (Protected - any logged in user)
 # ============================================
+# NOTE: In real projects, this repeated check would use a @decorator.
+# We write it explicitly here for learning purposes.
 
 @app.route('/api/todos', methods=['GET'])
-@token_required
-def get_todos(current_user):
+def get_todos():
+    # Step 1: Check if user is logged in
+    current_user, error = get_current_user()
+    if error:
+        return error
+
+    # Step 2: Get user's todos
     todos = Todo.query.filter_by(user_id=current_user.id).all()
     return jsonify({'todos': [todo.to_dict() for todo in todos]})
 
 
 @app.route('/api/todos', methods=['POST'])
-@token_required
-def create_todo(current_user):
-    data = request.get_json()
+def create_todo():
+    # Step 1: Check if user is logged in
+    current_user, error = get_current_user()
+    if error:
+        return error
 
+    # Step 2: Create todo
+    data = request.get_json()
     todo = Todo(
         task_content=data['task_content'],
         user_id=current_user.id
@@ -137,13 +151,20 @@ def create_todo(current_user):
 
 
 @app.route('/api/todos/<int:todo_id>', methods=['PUT'])
-@token_required
-def update_todo(current_user, todo_id):
+def update_todo(todo_id):
+    # Step 1: Check if user is logged in
+    current_user, error = get_current_user()
+    if error:
+        return error
+
+    # Step 2: Find todo
     todo = Todo.query.get_or_404(todo_id)
 
+    # Step 3: Check ownership
     if todo.user_id != current_user.id:
         return jsonify({'error': 'Not authorized'}), 403
 
+    # Step 4: Update todo
     data = request.get_json()
     if 'task_content' in data:
         todo.task_content = data['task_content']
@@ -155,13 +176,20 @@ def update_todo(current_user, todo_id):
 
 
 @app.route('/api/todos/<int:todo_id>', methods=['DELETE'])
-@token_required
-def delete_todo(current_user, todo_id):
+def delete_todo(todo_id):
+    # Step 1: Check if user is logged in
+    current_user, error = get_current_user()
+    if error:
+        return error
+
+    # Step 2: Find todo
     todo = Todo.query.get_or_404(todo_id)
 
+    # Step 3: Check ownership
     if todo.user_id != current_user.id:
         return jsonify({'error': 'Not authorized'}), 403
 
+    # Step 4: Delete todo
     db.session.delete(todo)
     db.session.commit()
 
@@ -169,27 +197,36 @@ def delete_todo(current_user, todo_id):
 
 
 # ============================================
-# ADMIN API (Admin Only)
+# ADMIN API (Only users with is_admin=True)
 # ============================================
+# These routes check: 1) Is user logged in? 2) Is user an admin?
 
 @app.route('/api/admin/users', methods=['GET'])
-@admin_required
-def get_all_users(current_user):
+def get_all_users():
+    # Step 1: Check if user is logged in AND is admin
+    current_user, error = get_admin_user()
+    if error:
+        return error  # Returns 401 if not logged in, 403 if not admin
+
+    # Step 2: Get all users
     users = User.query.all()
     return jsonify({'users': [user.to_dict_with_stats() for user in users]})
 
 
 @app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
-@admin_required
-def delete_user(current_user, user_id):
+def delete_user(user_id):
+    # Step 1: Check if user is admin
+    current_user, error = get_admin_user()
+    if error:
+        return error
+
+    # Step 2: Can't delete yourself
     if user_id == current_user.id:
         return jsonify({'error': 'Cannot delete yourself'}), 400
 
+    # Step 3: Find and delete user
     user = User.query.get_or_404(user_id)
-
-    # Delete user's todos first
-    Todo.query.filter_by(user_id=user_id).delete()
-
+    Todo.query.filter_by(user_id=user_id).delete()  # Delete user's todos first
     db.session.delete(user)
     db.session.commit()
 
@@ -197,8 +234,13 @@ def delete_user(current_user, user_id):
 
 
 @app.route('/api/admin/stats', methods=['GET'])
-@admin_required
-def get_stats(current_user):
+def get_stats():
+    # Step 1: Check if user is admin
+    current_user, error = get_admin_user()
+    if error:
+        return error
+
+    # Step 2: Calculate stats
     total_users = User.query.count()
     total_todos = Todo.query.count()
     completed_todos = Todo.query.filter_by(is_completed=True).count()
@@ -212,49 +254,21 @@ def get_stats(current_user):
 
 
 @app.route('/api/admin/todos', methods=['GET'])
-@admin_required
-def get_all_todos(current_user):
-    """Get all todos from all users (Admin only)"""
+def get_all_todos():
+    # Step 1: Check if user is admin
+    current_user, error = get_admin_user()
+    if error:
+        return error
+
+    # Step 2: Get ALL todos (not just admin's)
     todos = Todo.query.all()
     result = []
     for todo in todos:
         todo_data = todo.to_dict()
-        # Add username to each todo
-        todo_data['username'] = todo.user.username
+        todo_data['username'] = todo.user.username  # Add owner's username
         result.append(todo_data)
     return jsonify({'todos': result})
 
 
 if __name__ == '__main__':
     app.run(debug=True)
-
-
-# ============================================
-# SELF-STUDY QUESTIONS
-# ============================================
-# 1. What is the difference between @token_required and @admin_required?
-# 2. Why do we return 403 (Forbidden) instead of 401 (Unauthorized) for non-admins?
-# 3. What happens if admin tries to delete themselves?
-# 4. How does to_dict_with_stats() calculate todo statistics?
-#
-# ============================================
-# ACTIVITIES - Try These!
-# ============================================
-# Activity 1: Change admin password
-#   - Find where 'admin123' is set and change it to 'secret456'
-#   - Delete todo.db file and restart app
-#   - Try logging in with new password
-#
-# Activity 2: Add "Make Admin" feature
-#   - Create new route: PUT /api/admin/users/<id>/make-admin
-#   - This should set is_admin=True for that user
-#   - Test by making a regular user an admin
-#
-# Activity 3: Show admin badge in navbar
-#   - In dashboard.html, show "Admin" badge next to username if user.is_admin
-#   - Hint: Use Bootstrap badge class
-#
-# Activity 4: Prevent deleting other admins
-#   - In delete_user(), check if target user is also admin
-#   - Return error "Cannot delete another admin"
-# ============================================

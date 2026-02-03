@@ -1,16 +1,10 @@
 # =============================================================================
 # Part 6: Protected Routes
 # =============================================================================
-# Now we protect todo routes with authentication.
-# We will learn:
-#   1. @token_required decorator
-#   2. Authorization header
-#   3. User ownership verification
-# =============================================================================
 
 from flask import Flask, render_template, request, jsonify
 from models import db, User, Todo, init_db
-from auth import hash_password, verify_password, create_token, token_required
+from auth import hash_password, verify_password, create_token, get_current_user
 
 app = Flask(__name__)
 
@@ -104,16 +98,17 @@ def api_login():
 # =============================================================================
 # PROTECTED TODO API ROUTES
 # =============================================================================
-# All routes below use @token_required decorator.
-# This means:
-#   1. Request must have "Authorization: Bearer <token>" header
-#   2. Token must be valid and not expired
-#   3. current_user is automatically passed to the function
+# NOTE: In real projects, this repeated token check would use a @decorator.
+# We write it explicitly here for learning purposes.
 
 @app.route('/api/todos', methods=['GET'])
-@token_required
-def get_todos(current_user):
-    """Get all todos for the logged-in user."""
+def get_todos():
+    # Step 1: Check if user is logged in (validate token)
+    current_user, error = get_current_user()
+    if error:
+        return error  # Returns 401 if token is missing/invalid
+
+    # Step 2: Get only this user's todos
     todos = Todo.query.filter_by(user_id=current_user.id).all()
 
     return jsonify({
@@ -126,17 +121,22 @@ def get_todos(current_user):
 
 
 @app.route('/api/todos', methods=['POST'])
-@token_required
-def create_todo(current_user):
-    """Create a new todo for the logged-in user."""
+def create_todo():
+    # Step 1: Check if user is logged in
+    current_user, error = get_current_user()
+    if error:
+        return error
+
+    # Step 2: Validate request data
     data = request.get_json()
     if not data or not data.get('task_content'):
         return jsonify({'error': 'task_content required'}), 400
 
+    # Step 3: Create todo for this user
     todo = Todo(
         task_content=data['task_content'],
         is_completed=False,
-        user_id=current_user.id  # Automatically set from token!
+        user_id=current_user.id  # User ID from token (secure!)
     )
     db.session.add(todo)
     db.session.commit()
@@ -152,17 +152,22 @@ def create_todo(current_user):
 
 
 @app.route('/api/todos/<int:todo_id>', methods=['PUT'])
-@token_required
-def update_todo(current_user, todo_id):
-    """Update a todo (only if user owns it)."""
+def update_todo(todo_id):
+    # Step 1: Check if user is logged in
+    current_user, error = get_current_user()
+    if error:
+        return error
+
+    # Step 2: Find the todo
     todo = Todo.query.get(todo_id)
     if not todo:
         return jsonify({'error': 'Todo not found'}), 404
 
-    # Check ownership!
+    # Step 3: Check ownership - is this the user's todo?
     if todo.user_id != current_user.id:
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'error': 'Unauthorized'}), 403  # 403 = Forbidden
 
+    # Step 4: Update the todo
     data = request.get_json()
     if 'task_content' in data:
         todo.task_content = data['task_content']
@@ -182,17 +187,22 @@ def update_todo(current_user, todo_id):
 
 
 @app.route('/api/todos/<int:todo_id>', methods=['DELETE'])
-@token_required
-def delete_todo(current_user, todo_id):
-    """Delete a todo (only if user owns it)."""
+def delete_todo(todo_id):
+    # Step 1: Check if user is logged in
+    current_user, error = get_current_user()
+    if error:
+        return error
+
+    # Step 2: Find the todo
     todo = Todo.query.get(todo_id)
     if not todo:
         return jsonify({'error': 'Todo not found'}), 404
 
-    # Check ownership!
+    # Step 3: Check ownership
     if todo.user_id != current_user.id:
         return jsonify({'error': 'Unauthorized'}), 403
 
+    # Step 4: Delete the todo
     db.session.delete(todo)
     db.session.commit()
 
@@ -208,37 +218,3 @@ if __name__ == '__main__':
     print("  Open: http://127.0.0.1:5000")
     print("="*50 + "\n")
     app.run(debug=True)
-
-
-# ============================================
-# SELF-STUDY QUESTIONS
-# ============================================
-# 1. What is a decorator in Python? What does @token_required do?
-# 2. How does the Authorization header work?
-# 3. What is the difference between 401 Unauthorized and 403 Forbidden?
-# 4. Why do we check todo.user_id != current_user.id?
-# 5. What would happen if we removed @token_required from a route?
-#
-# ============================================
-# ACTIVITIES - Try These!
-# ============================================
-# Activity 1: Test without token
-#   - Open browser console (F12)
-#   - Try: fetch('/api/todos')
-#   - You should get 401 error!
-#
-# Activity 2: Test with token
-#   - Get token from localStorage: let token = localStorage.getItem('token')
-#   - Try: fetch('/api/todos', {headers: {'Authorization': 'Bearer ' + token}})
-#   - Now it works!
-#
-# Activity 3: Try to access other user's todo
-#   - Create todo as User A (note the todo id)
-#   - Login as User B
-#   - Try to delete User A's todo - you should get 403 Forbidden!
-#
-# Activity 4: Create your own decorator
-#   - Create @login_required that only checks if user is logged in
-#   - Create @verified_required that checks if user email is verified
-#   - Hint: Add 'is_verified' field to User model first
-# ============================================

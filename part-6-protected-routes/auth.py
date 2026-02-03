@@ -4,7 +4,7 @@
 
 import jwt
 from datetime import datetime, timedelta
-from functools import wraps
+# Note: We don't need 'wraps' anymore since we're not using decorators
 from flask import request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -45,55 +45,47 @@ def decode_token(token):
 
 
 # =============================================================================
-# @token_required DECORATOR
+# GET CURRENT USER (Helper Function)
 # =============================================================================
-# This is the key addition in Part 6!
-# A decorator is a function that wraps another function.
+# This function checks the token and returns the logged-in user.
+# We use a simple function instead of a decorator for easier understanding.
 #
-# Usage:
-#   @app.route('/api/todos')
-#   @token_required
-#   def get_todos(current_user):
-#       # current_user is automatically passed by the decorator
-#       return todos for current_user
+# Returns:
+#   - (user, None) if token is valid
+#   - (None, error_response) if token is invalid
 
-def token_required(f):
+def get_current_user():
     """
-    Decorator to protect routes.
+    Validates JWT token and returns current user.
 
     How it works:
     1. Checks for Authorization header
     2. Extracts and validates the JWT token
     3. Fetches user from database
-    4. Passes user as first argument to the route function
-
-    If token is missing/invalid, returns 401 error.
+    4. Returns (user, None) or (None, error_response)
     """
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        # Check if Authorization header exists
-        if 'Authorization' not in request.headers:
-            return jsonify({'error': 'Token is missing'}), 401
+    from models import User
 
-        # Extract token from "Bearer <token>"
-        try:
-            auth_header = request.headers['Authorization']
-            token = auth_header.split(" ")[1]
-        except IndexError:
-            return jsonify({'error': 'Invalid token format'}), 401
+    # Step 1: Check if Authorization header exists
+    if 'Authorization' not in request.headers:
+        return None, (jsonify({'error': 'Token is missing'}), 401)
 
-        # Decode and validate token
-        data = decode_token(token)
-        if not data:
-            return jsonify({'error': 'Token is invalid or expired'}), 401
+    # Step 2: Extract token from "Bearer <token>"
+    auth_header = request.headers['Authorization']
+    if not auth_header.startswith('Bearer '):
+        return None, (jsonify({'error': 'Invalid token format'}), 401)
 
-        # Get user from database
-        from models import User
-        current_user = User.query.get(data['user_id'])
-        if not current_user:
-            return jsonify({'error': 'User not found'}), 401
+    token = auth_header.split(' ')[1]
 
-        # Call the original function with current_user
-        return f(current_user, *args, **kwargs)
+    # Step 3: Decode and validate token
+    data = decode_token(token)
+    if not data:
+        return None, (jsonify({'error': 'Token is invalid or expired'}), 401)
 
-    return decorated
+    # Step 4: Get user from database
+    current_user = User.query.get(data['user_id'])
+    if not current_user:
+        return None, (jsonify({'error': 'User not found'}), 401)
+
+    # Success! Return user
+    return current_user, None
