@@ -37,6 +37,20 @@ def contact():
     """Contact page - contact information"""
     return render_template('contact.html')
 
+@app.route('/services')
+def services():
+    """Services page"""
+    return render_template('services.html')
+
+@app.route('/text')
+def text():
+    return "Hello World - This is plain text!"
+
+@app.route('/hello/<name>')
+def hello(name):
+    return f"Hello, {name}!"
+
+
 
 # =============================================================================
 # RUN THE SERVER
@@ -47,6 +61,7 @@ if __name__ == '__main__':
     print("  Open: http://127.0.0.1:5000")
     print("="*50 + "\n")
     app.run(debug=True)
+
 
 
 # ============================================
