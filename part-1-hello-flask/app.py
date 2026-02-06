@@ -11,7 +11,7 @@
 from flask import Flask, render_template
 
 # Create the Flask application
-app = Flask(__name__)
+app = Flask(__name__) 
 
 
 # =============================================================================
